@@ -138,7 +138,57 @@ function getMockResult(lead: LeadFormData): LeadQualificationResult {
     ],
   };
 }
+async function sendLeadToN8n(
+  lead: LeadFormData,
+  result: LeadQualificationResult,
+) {
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
 
+  if (!webhookUrl) {
+    console.log("ℹ️ N8N_WEBHOOK_URL not set. Skipping n8n.");
+    return;
+  }
+
+  try {
+    const payload = {
+      submittedAt: new Date().toISOString(),
+
+      name: lead.name,
+      email: lead.email,
+      phone: lead.phone,
+      serviceNeeded: lead.serviceNeeded,
+      budget: lead.budget,
+      timeline: lead.timeline,
+      message: lead.message,
+
+      leadScore: result.leadScore,
+      priority: result.priority,
+      summary: result.summary,
+      recommendedAction: result.recommendedAction,
+      draftReply: result.draftReply,
+      salesNotes: result.salesNotes.join(" | "),
+      missingInfo: result.missingInfo.join(" | "),
+    };
+
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("❌ n8n webhook failed:", response.status, text);
+      return;
+    }
+
+    console.log("✅ Lead sent to n8n");
+  } catch (error) {
+    console.error("❌ Failed to send lead to n8n:", error);
+  }
+}
 export async function POST(request: Request) {
   console.log("✅ API route started");
 
@@ -184,8 +234,16 @@ export async function POST(request: Request) {
   if (process.env.USE_MOCK_AI === "true") {
     console.log("🧪 Using mock AI result");
 
+    const result = getMockResult(lead);
+
+    await sendLeadToN8n(lead, result);
+
+    const normalizedResult = normalizeResult(result);
+
+    await sendLeadToN8n(lead, normalizedResult);
+
     return NextResponse.json({
-      result: getMockResult(lead),
+      result: normalizedResult,
     });
   }
 
