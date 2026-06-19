@@ -20,8 +20,14 @@ export type LeadQualificationResult = {
   missingInfo: string[];
 };
 
+export type AutomationStatus = {
+  sentToN8n: boolean;
+  message: string;
+};
+
 export type QualifyLeadSuccessResponse = {
   result: LeadQualificationResult;
+  automation: AutomationStatus;
 };
 
 export type QualifyLeadErrorResponse = {

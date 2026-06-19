@@ -3,6 +3,7 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useMemo, useState } from "react";
 import type {
+  AutomationStatus,
   LeadFormData,
   LeadQualificationResult,
   Priority,
@@ -69,6 +70,8 @@ const priorityStyles: Record<
 export default function Home() {
   const [formData, setFormData] = useState<LeadFormData>(initialFormData);
   const [result, setResult] = useState<LeadQualificationResult | null>(null);
+  const [automationStatus, setAutomationStatus] =
+    useState<AutomationStatus | null>(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -87,44 +90,51 @@ export default function Home() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     setIsSubmitting(true);
     setError("");
     setResult(null);
+    setAutomationStatus(null);
 
     try {
       const controller = new AbortController();
-const timeoutId = window.setTimeout(() => controller.abort(), 30000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 30000);
 
-const response = await fetch("/api/qualify-lead", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(formData),
-  signal: controller.signal,
-});
+      const response = await fetch("/api/qualify-lead", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formData),
+        signal: controller.signal,
+      });
 
-window.clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
 
       const data = (await response.json()) as QualifyLeadResponse;
 
-      if (!response.ok || "error" in data) {
-        throw new Error("error" in data ? data.error : "Request failed.");
+      if ("error" in data) {
+        throw new Error(data.error);
+      }
+
+      if (!response.ok) {
+        throw new Error("Request failed.");
       }
 
       setResult(data.result);
+      setAutomationStatus(data.automation);
     } catch (reason) {
-  const message =
-    reason instanceof DOMException && reason.name === "AbortError"
-      ? "The request took too long. Please check your OpenAI API key, model name, billing, or server terminal logs."
-      : reason instanceof Error
-        ? reason.message
-        : "Something went wrong while qualifying the lead.";
+      const message =
+        reason instanceof DOMException && reason.name === "AbortError"
+          ? "The request took too long. Please check your API key, n8n webhook, or terminal logs."
+          : reason instanceof Error
+            ? reason.message
+            : "Something went wrong while qualifying the lead.";
 
-  setError(message);
-} finally {
-  setIsSubmitting(false);
-}
+      setError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -160,7 +170,8 @@ window.clearTimeout(timeoutId);
 
                 <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
                   Capture inbound demand, qualify intent, draft the first reply,
-                  and prepare a sales rep for the next conversation.
+                  save the lead to Google Sheets, and prepare a sales rep for the
+                  next conversation.
                 </p>
               </div>
 
@@ -357,6 +368,18 @@ window.clearTimeout(timeoutId);
 
                 {result ? (
                   <div className="mt-6 grid gap-5">
+                    {automationStatus ? (
+                      <div
+                        className={`rounded-md border px-4 py-3 text-sm ${
+                          automationStatus.sentToN8n
+                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
+                            : "border-amber-300/30 bg-amber-300/10 text-amber-100"
+                        }`}
+                      >
+                        {automationStatus.message}
+                      </div>
+                    ) : null}
+
                     <div>
                       <div className="mb-2 flex items-end justify-between">
                         <p className="text-sm font-medium text-slate-400">
@@ -394,7 +417,8 @@ window.clearTimeout(timeoutId);
                 ) : (
                   <div className="mt-6 rounded-md border border-dashed border-white/15 bg-black/15 p-6 text-sm leading-6 text-slate-400">
                     Submit a lead to generate the score, priority, sales notes,
-                    recommended action, and draft reply.
+                    recommended action, draft reply, and Google Sheets save
+                    status.
                   </div>
                 )}
               </section>

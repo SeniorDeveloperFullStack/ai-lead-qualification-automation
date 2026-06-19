@@ -4,12 +4,7 @@ import type { LeadFormData, LeadQualificationResult } from "@/types/lead";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  timeout: 30000,
-});
-
-const qualificationSchema = {
+const qualificationSchema: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -58,7 +53,7 @@ const qualificationSchema = {
     "salesNotes",
     "missingInfo",
   ],
-} as const;
+};
 
 function getStringField(
   payload: Record<string, unknown>,
@@ -99,14 +94,18 @@ function normalizeResult(
 }
 
 function getMockResult(lead: LeadFormData): LeadQualificationResult {
+  const timeline = lead.timeline.toLowerCase();
+  const budget = lead.budget.toLowerCase();
+
   const isUrgent =
-    lead.timeline.toLowerCase().includes("asap") ||
-    lead.timeline.toLowerCase().includes("this week");
+    timeline.includes("asap") ||
+    timeline.includes("this week") ||
+    timeline.includes("today");
 
   const hasStrongBudget =
-    lead.budget.includes("$3,000") ||
-    lead.budget.includes("$7,500") ||
-    lead.budget.includes("$15,000");
+    budget.includes("$3,000") ||
+    budget.includes("$7,500") ||
+    budget.includes("$15,000");
 
   const leadScore = isUrgent && hasStrongBudget ? 92 : isUrgent ? 84 : 68;
 
@@ -138,15 +137,20 @@ function getMockResult(lead: LeadFormData): LeadQualificationResult {
     ],
   };
 }
+
 async function sendLeadToN8n(
   lead: LeadFormData,
   result: LeadQualificationResult,
-) {
+): Promise<{ sentToN8n: boolean; message: string }> {
   const webhookUrl = process.env.N8N_WEBHOOK_URL;
 
   if (!webhookUrl) {
     console.log("ℹ️ N8N_WEBHOOK_URL not set. Skipping n8n.");
-    return;
+
+    return {
+      sentToN8n: false,
+      message: "Lead qualified, but n8n webhook URL is not configured.",
+    };
   }
 
   try {
@@ -181,14 +185,29 @@ async function sendLeadToN8n(
     if (!response.ok) {
       const text = await response.text();
       console.error("❌ n8n webhook failed:", response.status, text);
-      return;
+
+      return {
+        sentToN8n: false,
+        message: "Lead qualified, but saving to Google Sheets failed.",
+      };
     }
 
     console.log("✅ Lead sent to n8n");
+
+    return {
+      sentToN8n: true,
+      message: "Lead qualified and saved to Google Sheets.",
+    };
   } catch (error) {
     console.error("❌ Failed to send lead to n8n:", error);
+
+    return {
+      sentToN8n: false,
+      message: "Lead qualified, but n8n connection failed.",
+    };
   }
 }
+
 export async function POST(request: Request) {
   console.log("✅ API route started");
 
@@ -235,15 +254,11 @@ export async function POST(request: Request) {
     console.log("🧪 Using mock AI result");
 
     const result = getMockResult(lead);
-
-    await sendLeadToN8n(lead, result);
-
-    const normalizedResult = normalizeResult(result);
-
-    await sendLeadToN8n(lead, normalizedResult);
+    const automation = await sendLeadToN8n(lead, result);
 
     return NextResponse.json({
-      result: normalizedResult,
+      result,
+      automation,
     });
   }
 
@@ -261,6 +276,11 @@ export async function POST(request: Request) {
 
   try {
     console.log("⏳ Calling OpenAI...");
+
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: 30000,
+    });
 
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
@@ -296,9 +316,12 @@ Return only data matching the schema.
     }
 
     const result = JSON.parse(response.output_text) as LeadQualificationResult;
+    const normalizedResult = normalizeResult(result);
+    const automation = await sendLeadToN8n(lead, normalizedResult);
 
     return NextResponse.json({
-      result: normalizeResult(result),
+      result: normalizedResult,
+      automation,
     });
   } catch (error) {
     console.error("Lead qualification failed", error);
